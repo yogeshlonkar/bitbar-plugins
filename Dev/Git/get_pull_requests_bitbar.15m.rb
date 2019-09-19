@@ -2,12 +2,16 @@
 # frozen_string_literal: true
 
 # <bitbar.title>PR Counts for Github and Bitbucket</bitbar.title>
-# <bitbar.version>v1.1.1</bitbar.version>
+# <bitbar.version>v2.0.0</bitbar.version>
 # <bitbar.author>Marco Cabazal</bitbar.author>
 # <bitbar.author.github>MarcoCabazal</bitbar.author.github>
 # <bitbar.desc>Gets Pull Request Counts for Github and Bitbucket Repos</bitbar.desc>
 # <bitbar.image>https://marcocabazal.github.io/images/gpr_snap.png</bitbar.image>
 # <bitbar.dependencies>ruby >= 2</bitbar.dependencies>
+
+# contributor
+# <bitbar.author>Yogesh Lonkar</bitbar.author>
+# <bitbar.author.github>yogeshlonkar</bitbar.author.github>
 
 ###### README
 # Please secure the app-specific password/personal access token from either Bitbucket or Github.
@@ -26,8 +30,9 @@
 #          {n}m for minutes
 #          {n}h for hours
 #          {n}d for days
-#
-#
+######################################################################################################################
+## REQUIRES NERD-FONTS all or just https://github.com/ryanoasis/nerd-fonts/tree/master/patched-fonts/DejaVuSansMono ##
+######################################################################################################################
 ###### EXTRA
 # When run from bitbar or if filename contains the word bitbar, output is
 # multiline (click menu item to see details), otherwise, it just outputs
@@ -35,8 +40,10 @@
 # just create a symlink to this script without the word bitbar and refer to that link instead.
 
 ###### BEGIN_CONFIG
-REPOS_YAML = File.expand_path "~/.repos.yaml"
+REPOS_YAML = File.expand_path "#{__dir__}/configs/repos.yaml"
 ###### Sample YAML config
+# username: "your-github-username-not-your-email-used-if-not-set-per-repo"
+# app_password: "personal-access-token-used-if-not-set-per-repo"
 # repos:
 #   - name: "Bitbar Plugins"
 #     service: "github"
@@ -61,7 +68,7 @@ SERVICES = {
   },
   github: {
     api_prefix: "https://api.github.com/repos",
-    api_suffix: "pulls?state=open&type=pr&per_page=1",
+    api_suffix: "pulls?state=open&type=pr",
     human_prefix: "https://github.com",
     human_suffix: "pulls"
   }
@@ -73,12 +80,24 @@ require "json"
 require "base64"
 require "yaml"
 
+$color_black   = "\e[30m"
+$color_red     = "\e[31m"
+$color_green   = "\e[32m"
+$color_yellow  = "\e[33m"
+$color_blue    = "\e[34m"
+$color_cyan    = "\e[36m"
+$color_white   = "\e[37m"
+$color_bg_blue = "\e[44m"
+$color_bg_white= "\e[47m"
+$color_bg_gray = "\e[40m"
+$ansi_clear    = "\e[0m"
+
 class GetPullRequests
   def do_it!
     return if $PROGRAM_NAME != __FILE__
     parse_yaml_config
     if !should_monitor_on_weekends? && its_a_weekend?
-      puts "0 PRs."
+      # puts "  | font=DejaVuSansMonoNerdFontCompleteM-Book" # PR
       return
     end
 
@@ -102,16 +121,20 @@ class GetPullRequests
 
   def parse_yaml_config
     if !File.exist? REPOS_YAML
-      puts "Please configure at least one repo in ~/.repos.yaml. See source for example."
+      puts "Configure #{__dir__}/configs/repos.yaml. See source for example."
       exit
     end
     config = YAML.load_file REPOS_YAML
     @should_monitor_on_weekends = config["should_monitor_on_weekends"] || false
+    @global_username = config["username"] || nil
+    @global_app_password = config["app_password"] || nil
 
     @repos = []
     config["repos"].each do |repo|
       repo_hash = { name: repo["name"], service: repo["service"], repo: repo["repo"] }
+      repo_hash[:username] = @global_username if !@global_username.nil?
       repo_hash[:username] = repo["username"] if !repo["username"].nil?
+      repo_hash[:app_password] = @global_app_password if !@global_app_password.nil?
       repo_hash[:app_password] = repo["app_password"] if !repo["app_password"].nil?
       @repos << repo_hash
     end
@@ -126,13 +149,12 @@ class GetPullRequests
       http.verify_mode = OpenSSL::SSL::VERIFY_PEER
 
       request = Net::HTTP.const_get(http_method.downcase.capitalize).new(uri)
-      request.add_field "Authorization", "Basic #{token}" if !token.nil?
+      request.add_field "Authorization", "token #{token}" if !token.nil?
       request.add_field "Content-Type", "application/json"
       response = http.request(request)
-
       yield(response)
     rescue StandardError => error
-      puts "? PRs"
+      puts "? " # PR
       if called_by_bitbar?
         puts "---"
         puts "Got Error: #{error.message}"
@@ -142,7 +164,7 @@ class GetPullRequests
 
   def retrieve_pr_counts
     total_pr_count = 0
-    repo_counts = ["---"]
+    repo_details = ["---"]
 
     @repos.each do |repo|
       if repo[:app_password]
@@ -159,16 +181,19 @@ class GetPullRequests
         pr_count = pr_count_for_github(response) if repo[:service] == "github"
         total_pr_count += pr_count
 
-        repo_counts << "#{repo[:name]}: #{pr_count} | href=#{human_url}" if called_by_bitbar?
+        pr_count_str = "- #{pr_count}"
+        repo_details << "#{repo[:name]} #{pr_count > 0 ? pr_count_str : ''}| #{pr_count == 0 ? 'color=#28a745': ''} href=#{human_url}" if called_by_bitbar?
+        pr_details = pr_details_for_github(response) if repo[:service] == "github"
+        repo_details.concat pr_details
       end
     end
 
     if total_pr_count.positive?
-      puts "#{total_pr_count} PR#{total_pr_count > 1 ? 's' : ''}"
+      puts "#{$color_white}#{total_pr_count} #{$ansi_clear} | ansi=true size=16 font=DejaVuSansMonoNerdFontCompleteM-Book" # PR
     else
-      puts called_by_bitbar? ? "0 PRs | color=lightgray size=12" : "0 PRs"
+      puts called_by_bitbar? ? "#{$color_green} #{$color_blue}#{$ansi_clear} | ansi=true size=12 font=DejaVuSansMonoNerdFontCompleteM-Book" : " " # PR
     end
-    puts repo_counts.join("\n") if called_by_bitbar?
+    puts repo_details.join("\n") if called_by_bitbar?
   end
 
   def pr_count_for_github(response)
@@ -189,6 +214,17 @@ class GetPullRequests
   def pr_count_for_bitbucket(response)
     result = JSON.parse(response.body)
     result["size"].to_i
+  end
+
+  def pr_details_for_github(response)
+    result = []
+    pr_details = JSON.parse(response.body)
+    pr_details.each do |pr_detail|
+      result << "--#{$color_cyan}#{pr_detail['title']}#{$ansi_clear} ##{pr_detail['number']} | href=#{pr_detail['html_url']}"
+      result << "--#{$color_blue}#{pr_detail['head']['ref']}#{$ansi_clear} #{$color_yellow}@#{pr_detail['user']['login']}#{$ansi_clear} | ansi=true size=12 href=#{pr_detail['html_url']}/files"
+      result << "-----"
+    end
+    result
   end
 end
 

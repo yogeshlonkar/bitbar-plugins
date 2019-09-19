@@ -14,14 +14,18 @@ import urllib2
 import os
 import sys
 import re
+import subprocess
 from itertools import groupby
 
 # GitHub.com
-github_api_key = os.getenv( 'GITHUB_TOKEN', 'Enter your GitHub.com Personal Access Token here...' )
+output = subprocess.check_output(['/usr/local/bin/bash','-lc', 'echo $GITHUB_TOKEN']).strip()
+github_api_key = output
 
 # GitHub:Enterprise (optional)
-enterprise_api_key = os.getenv( 'GITHUB_ENTERPRISE_TOKEN', 'Enter your GitHub:Enterprise Personal Access Token here...' )
-enterprise_api_url = os.getenv( 'GITHUB_ENTERPRISE_API', 'https://github.example.com/api/v3' )
+output = subprocess.check_output(['/usr/local/bin/bash','-lc', 'echo $GITHUB_ENTERPRISE_TOKEN']).strip()
+enterprise_api_key = output
+output = subprocess.check_output(['/usr/local/bin/bash','-lc', 'echo $GITHUB_ENTERPRISE_API']).strip()
+enterprise_api_url = output if output else 'https://github.example.com/api/v3'
 
 active = '#4078C0'
 inactive = '#7d7d7d'
