@@ -59,26 +59,45 @@ REPOS_YAML = File.expand_path "#{__dir__}/configs/repos.yaml"
 
 ###### END_CONFIG
 
+require "net/http"
+require "net/https"
+require "json"
+require "base64"
+require "yaml"
+
 SERVICES = {
   bitbucket: {
+    method: "GET",
     api_prefix: "https://api.bitbucket.org/2.0/repositories",
     api_suffix: "pullrequests",
     human_prefix: "https://bitbucket.org",
     human_suffix: "pull-requests"
   },
   github: {
-    api_prefix: "https://api.github.com/repos",
-    api_suffix: "pulls?state=open&type=pr",
+    method: "POST",
+    api_prefix: "https://api.github.com/graphql",
+    api_suffix: "",
+    query: "{
+      repository(owner: \"%s\", name: \"%s\") {
+        pullRequests(last: 100, states: OPEN) {
+          totalCount
+          nodes {
+            title
+            headRefName
+            number
+            url
+            mergeStateStatus
+            author {
+              login
+            }
+          }
+        }
+      }
+    }",
     human_prefix: "https://github.com",
     human_suffix: "pulls"
   }
 }.freeze
-
-require "net/http"
-require "net/https"
-require "json"
-require "base64"
-require "yaml"
 
 $color_black   = "\e[30m"
 $color_red     = "\e[31m"
@@ -140,7 +159,7 @@ class GetPullRequests
     end
   end
 
-  def call_api(http_method, endpoint, token = nil)
+  def call_api(http_method, endpoint, token = nil, data = nil)
     uri = URI endpoint
 
     begin
@@ -148,9 +167,14 @@ class GetPullRequests
       http.use_ssl = true
       http.verify_mode = OpenSSL::SSL::VERIFY_PEER
 
-      request = Net::HTTP.const_get(http_method.downcase.capitalize).new(uri)
+      if http_method == "POST"
+        request = Net::HTTP::Post.new(uri, 'Accept' => 'application/vnd.github.merge-info-preview+json')
+      else
+        request = Net::HTTP.const_get(http_method.downcase.capitalize).new(uri)
+      end
       request.add_field "Authorization", "token #{token}" if !token.nil?
       request.add_field "Content-Type", "application/json"
+      request.body = data.to_json if !data.nil?
       response = http.request(request)
       yield(response)
     rescue StandardError => error
@@ -173,10 +197,18 @@ class GetPullRequests
       end
 
       service = SERVICES[repo[:service].to_sym]
-      endpoint = "#{service[:api_prefix]}/#{repo[:repo]}/#{service[:api_suffix]}"
+      if  repo[:service] == "github"
+        endpoint = "#{service[:api_prefix]}"
+        owner = repo[:repo].split("/")[0].strip
+        repo_name = repo[:repo].split("/")[1].strip
+        data = { query: service[:query] %[owner, repo_name] }
+      else
+        endpoint = "#{service[:api_prefix]}/#{repo[:repo]}/#{service[:api_suffix]}"
+        data = nil
+      end
       human_url = "#{service[:human_prefix]}/#{repo[:repo]}/#{service[:human_suffix]}"
 
-      call_api 'GET', endpoint, token do |response|
+      call_api service[:method], endpoint, token, data do |response|
         pr_count = pr_count_for_bitbucket(response) if repo[:service] == "bitbucket"
         pr_count = pr_count_for_github(response) if repo[:service] == "github"
         total_pr_count += pr_count
@@ -193,6 +225,7 @@ class GetPullRequests
     else
       puts called_by_bitbar? ? "#{$color_green} #{$color_blue}#{$ansi_clear} | ansi=true size=12 font=DejaVuSansMonoNerdFontCompleteM-Book" : " " # PR
     end
+    repo_details << "Refresh 痢| font=DejaVuSansMonoNerdFontCompleteM-Book terminal=false refresh=true"
     puts repo_details.join("\n") if called_by_bitbar?
   end
 
@@ -207,7 +240,11 @@ class GetPullRequests
       links["last"].to_i
     else
       result = JSON.parse(response.body)
-      result.count.to_i
+      if result["data"].nil?
+        result["data"]["repository"]["pullRequests"]["totalCount"].to_i
+      else
+        result.count.to_i
+      end
     end
   end
 
@@ -218,10 +255,33 @@ class GetPullRequests
 
   def pr_details_for_github(response)
     result = []
-    pr_details = JSON.parse(response.body)
+    respBody = JSON.parse(response.body)
+    pr_details = respBody["data"]["repository"]["pullRequests"]["nodes"]
     pr_details.each do |pr_detail|
-      result << "--#{$color_cyan}#{pr_detail['title']}#{$ansi_clear} ##{pr_detail['number']} | href=#{pr_detail['html_url']}"
-      result << "--#{$color_blue}#{pr_detail['head']['ref']}#{$ansi_clear} #{$color_yellow}@#{pr_detail['user']['login']}#{$ansi_clear} | ansi=true size=12 href=#{pr_detail['html_url']}/files"
+      pr_status = ""
+      case pr_detail["mergeStateStatus"]
+      when "BEHIND"
+        pr_status = "🔙"
+      when "BLOCKED"
+        pr_status = "🚫"
+      when "CLEAN"
+        pr_status = "👌"
+      when "DIRTY"
+        pr_status = "💩"
+      when "DRAFT"
+        pr_status = "📝"
+      when "HAS_HOOKS"
+        pr_status = "ﯠ"
+      when "UNKNOWN"
+        pr_status = "?"
+      when "UNSTABLE"
+        pr_status = "🔥"
+      else
+        pr_status = "?"
+      end
+
+      result << "--#{pr_status} #{$color_cyan}#{pr_detail["title"]}#{$ansi_clear} ##{pr_detail["number"]} | href=#{pr_detail["url"]} font=DejaVuSansMonoNerdFontCompleteM-Book"
+      result << "--#{$color_blue}#{pr_detail["headRefName"]}#{$ansi_clear} #{$color_yellow}@#{pr_detail["author"]["login"]}#{$ansi_clear} | ansi=true size=12 href=#{pr_detail["url"]}/files"
       result << "-----"
     end
     result

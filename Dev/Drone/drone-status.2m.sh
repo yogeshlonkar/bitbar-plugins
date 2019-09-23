@@ -66,7 +66,7 @@ output=
 function line_parms()
 {
   local OPTIND o a
-  while getopts ":ac:fh:i:s:t:" o; do
+  while getopts ":ac:fh:i:rs:t:T" o; do
     case "${o}" in
       a)
         printf 'ansi=true '
@@ -86,8 +86,14 @@ function line_parms()
       s)
         printf "size=${OPTARG} "
         ;;
+      r)
+        printf "refresh=true "
+        ;;
       t)
         printf "templateImage=${OPTARG} "
+        ;;
+      T)
+        printf "terminal=false "
         ;;
     esac
   done
@@ -110,7 +116,7 @@ function truncate_n_pad()
   fi
 }
 
-if [[ ${#REPO_BRANCHES[*]} == 0 ]]; then 
+if [[ ${#REPO_BRANCHES[*]} == 0 ]]; then
   output="no projects configured"
 else
   if (( ${#REPO_ORDER[*]} != ${#REPO_BRANCHES[*]} )); then
@@ -118,7 +124,7 @@ else
   fi
   for repo in ${REPO_ORDER[*]}; do
 
-    if [[ -z "${REPO_BRANCHES[${repo}]}" ]]; then 
+    if [[ -z "${REPO_BRANCHES[${repo}]}" ]]; then
       output="no branch configured for ${repo}"
       break
     fi
@@ -198,8 +204,9 @@ else
     done
   done
 fi
+output+="\\nRefresh 痢| $(line_parms -f -T -r)"
 
-status_icon=${DRONE_IMAGE}
+status_excon=${DRONE_IMAGE}
 
 if [[ ${failure} -gt 0 ]]; then
   status_icon=${DRONE_IMAGE_RED}
