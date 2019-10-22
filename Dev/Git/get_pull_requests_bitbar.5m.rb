@@ -43,7 +43,7 @@
 REPOS_YAML = File.expand_path "#{__dir__}/configs/repos.yaml"
 ###### Sample YAML config
 # username: "your-github-username-not-your-email-used-if-not-set-per-repo"
-# app_password: "personal-access-token-used-if-not-set-per-repo"
+# app_password: ENV_VAR_NAME_FOR_TOKEN
 # repos:
 #   - name: "Bitbar Plugins"
 #     service: "github"
@@ -53,12 +53,13 @@ REPOS_YAML = File.expand_path "#{__dir__}/configs/repos.yaml"
 #     service: "github"
 #     repo: "matryer/bitbar-plugins"
 #     username: "your-github-username-not-your-email"
-#     app_password: "personal-access-token"
+#     app_password: ENV_VAR_NAME_FOR_TOKEN
 #
 # should_monitor_on_weekends: true
 
 ###### END_CONFIG
 
+require "open3" 
 require "net/http"
 require "net/https"
 require "json"
@@ -111,6 +112,10 @@ $color_bg_white= "\e[47m"
 $color_bg_gray = "\e[40m"
 $ansi_clear    = "\e[0m"
 
+def shortener(path)
+  path.gsub(/(.{25}).+/,'\1...')
+end
+
 class GetPullRequests
   def do_it!
     return if $PROGRAM_NAME != __FILE__
@@ -153,8 +158,11 @@ class GetPullRequests
       repo_hash = { name: repo["name"], service: repo["service"], repo: repo["repo"] }
       repo_hash[:username] = @global_username if !@global_username.nil?
       repo_hash[:username] = repo["username"] if !repo["username"].nil?
-      repo_hash[:app_password] = @global_app_password if !@global_app_password.nil?
-      repo_hash[:app_password] = repo["app_password"] if !repo["app_password"].nil?
+      env_var_name = @global_app_password if !@global_app_password.nil?
+      env_var_name = repo["app_password"] if !repo["app_password"].nil?
+      Open3.popen3("bash -lc 'echo -n $#{env_var_name}'") do |stdin, stdout, stderr, wait_thr|
+        repo_hash[:app_password] = stdout.read
+      end
       @repos << repo_hash
     end
   end
@@ -188,7 +196,7 @@ class GetPullRequests
 
   def retrieve_pr_counts
     total_pr_count = 0
-    repo_details = ["---"]
+    repo_details = ["---", "Refresh 痢| font=DejaVuSansMonoNerdFontCompleteM-Book terminal=false refresh=true", "---"]
 
     @repos.each do |repo|
       if repo[:app_password]
@@ -214,7 +222,8 @@ class GetPullRequests
         total_pr_count += pr_count
 
         pr_count_str = "- #{pr_count}"
-        repo_details << "#{repo[:name]} #{pr_count > 0 ? pr_count_str : ''}| #{pr_count == 0 ? 'color=#28a745': ''} href=#{human_url}" if called_by_bitbar?
+        short_repo_name = shortener(repo[:name])
+        repo_details << "#{short_repo_name} #{pr_count > 0 ? pr_count_str : ''}| #{pr_count == 0 ? 'color=#28a745': ''} href=#{human_url}" if called_by_bitbar?
         pr_details = pr_details_for_github(response) if repo[:service] == "github"
         repo_details.concat pr_details
       end
@@ -225,7 +234,6 @@ class GetPullRequests
     else
       puts called_by_bitbar? ? "#{$color_green} #{$color_blue}#{$ansi_clear} | ansi=true size=12 font=DejaVuSansMonoNerdFontCompleteM-Book" : " " # PR
     end
-    repo_details << "Refresh 痢| font=DejaVuSansMonoNerdFontCompleteM-Book terminal=false refresh=true"
     puts repo_details.join("\n") if called_by_bitbar?
   end
 
@@ -240,7 +248,7 @@ class GetPullRequests
       links["last"].to_i
     else
       result = JSON.parse(response.body)
-      if result["data"].nil?
+      if result["data"] != nil
         result["data"]["repository"]["pullRequests"]["totalCount"].to_i
       else
         result.count.to_i
